@@ -1,37 +1,35 @@
 import os
 import requests
 
-def get_current_gold_price():
-    api_key = os.getenv('GOLD_API_KEY')
-    url = f"https://api.metalpriceapi.com/v1/latest?api_key={api_key}&base=USD&currencies=XAU"
+def send_telegram(message):
+    token = os.getenv('TELEGRAM_TOKEN')
+    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={message}&parse_mode=Markdown"
+    requests.get(url)
+
+def main():
+    report = "📊 **BÁO CÁO THỊ TRƯỜNG**\n"
     
+    # 1. Crypto (Dùng CoinGecko - Không cần Key)
     try:
-        response = requests.get(url)
-        data = response.json()
-        
-        # Bước kiểm tra sống còn: Chỉ truy cập nếu dữ liệu thực sự tồn tại
-        if 'rates' in data and 'XAU' in data['rates']:
-            return data['rates']['XAU']
+        c_res = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true").json()
+        btc, eth = c_res['bitcoin']['usd'], c_res['ethereum']['usd']
+        report += f"\n🪙 BTC: ${btc:,}\n🔹 ETH: ${eth:,}"
+    except:
+        report += "\n❌ Lỗi dữ liệu Crypto"
+
+    # 2. Vàng (Kiểm tra lỗi API Key)
+    key = os.getenv('GOLD_API_KEY')
+    try:
+        g_res = requests.get(f"https://api.metalpriceapi.com/v1/latest?api_key={key}&base=USD&currencies=XAU").json()
+        if 'rates' in g_res:
+            report += f"\n✨ Vàng: ${g_res['rates']['XAU']:,.2f}/oz"
         else:
-            # Ghi log chi tiết để Analyst phân tích tại sao API lỗi
-            print(f"⚠️ API Error or invalid response structure: {data}")
-            return None
-            
-    except Exception as e:
-        print(f"❌ Network connection error: {e}")
-        return None
+            report += f"\n⚠️ Lỗi Vàng: {g_res.get('error', {}).get('message', 'Sai API Key')}"
+    except:
+        report += "\n❌ Lỗi kết nối API Vàng"
 
-def check_and_alert():
-    price = get_current_gold_price()
-    
-    # Nếu giá là None (lỗi API), chúng ta dừng hệ thống tại đây để tránh crash
-    if price is None:
-        print("🛑 System halted: Could not retrieve market data.")
-        return
-
-    # Nếu có giá, tiếp tục logic gửi Telegram và so sánh "200 giá" của bạn
-    print(f"✅ Market Data Retrieved: {price}")
-    # (Thêm code gửi Telegram của bạn ở đây)
+    send_telegram(report)
 
 if __name__ == "__main__":
-    check_and_alert()
+    main()
