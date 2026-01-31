@@ -1,48 +1,66 @@
 import requests
-import time
+import os
 
-# Cấu hình mốc chênh lệch (Ví dụ: 200.000 VNĐ hoặc 200 USD)
-THRESHOLD = 200 
-LAST_PRICE_FILE = "last_gold_price.txt"
+def get_market_data():
+    # 1. Lấy dữ liệu Crypto (BTC & ETH) từ CoinGecko
+    crypto_url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true"
+    
+    # 2. Lấy giá Vàng từ MetalPriceAPI
+    gold_api_key = os.getenv('GOLD_API_KEY')
+    gold_url = f"https://api.metalpriceapi.com/v1/latest?api_key={gold_api_key}&base=USD&currencies=XAU"
+    
+    report = "🚀 **BÁO CÁO THỊ TRƯỜNG TỔNG HỢP**\n\n"
+    has_big_move = False
 
-def get_current_gold_price():
-    # Giả lập lấy giá vàng từ API (hoặc scraping từ web giá vàng VN)
-    # Để chính xác "200 giá" theo thị trường VN, bạn nên dùng API giá vàng SJC
-    url = "https://api.metalpriceapi.com/v1/latest?api_key=YOUR_API_KEY&base=USD&currencies=XAU"
-    data = requests.get(url).json()
-    price = data['rates']['XAU'] # Giá tính theo đơn vị bạn chọn
-    return price
-
-def get_last_price():
     try:
-        with open(LAST_PRICE_FILE, "r") as f:
-            return float(f.read())
-    except FileNotFoundError:
-        return 0
+        # Xử lý Crypto
+        c_res = requests.get(crypto_url).json()
+        for coin in ['bitcoin', 'ethereum']:
+            name = coin.upper()
+            price = c_res[coin]['usd']
+            change = c_res[coin]['usd_24h_change']
+            
+            report += f"🔹 **{name}:** ${price:,} ({change:.2f}%)\n"
+            
+            # Cảnh báo biến động mạnh (>5%)
+            if abs(change) >= 5:
+                report += f"      ⚠️ CẢNH BÁO: {name} biến động mạnh!\n"
+                has_big_move = True
 
-def save_current_price(price):
-    with open(LAST_PRICE_FILE, "w") as f:
-        f.write(str(price))
+        # Xử lý Vàng (Cơ chế bảo vệ tránh KeyError 'rates')
+        g_res = requests.get(gold_url).json()
+        if 'rates' in g_res:
+            gold_price = g_res['rates']['XAU']
+            report += f"\n✨ **VÀNG Thế giới:** ${gold_price:,.2f}/oz\n"
+            
+            # Đọc giá cũ để so sánh 200 giá
+            if os.path.exists("last_gold.txt"):
+                with open("last_gold.txt", "r") as f:
+                    last_price = float(f.read())
+                
+                diff = abs(gold_price - last_price)
+                if diff >= 200:
+                    direction = "TĂNG" if gold_price > last_price else "GIẢM"
+                    report += f"      ⚠️ BÁO ĐỘNG: Vàng {direction} {diff:.2f} giá!\n"
+                    has_big_move = True
+            
+            # Lưu giá mới làm mốc
+            with open("last_gold.txt", "w") as f:
+                f.write(str(gold_price))
+        else:
+            report += f"\n❌ Lỗi Vàng: {g_res.get('error', {}).get('message', 'Nguồn dữ liệu lỗi')}\n"
 
-def check_and_alert():
-    current_price = get_current_gold_price()
-    last_price = get_last_price()
-    
-    diff = abs(current_price - last_price)
-    
-    if diff >= THRESHOLD:
-        direction = "📈 TĂNG" if current_price > last_price else "📉 GIẢM"
-        msg = f"⚠️ **CẢNH BÁO BIẾN ĐỘNG VÀNG**\n"
-        msg += f"Giá vừa {direction} {diff:.2f} giá!\n"
-        msg += f"Giá hiện tại: {current_price:.2f}"
-        
-        send_to_telegram(msg) # Hàm gửi Telegram đã viết ở bước trước
-        save_current_price(current_price)
-        print(f"Đã gửi cảnh báo. Mốc giá mới: {current_price}")
-    else:
-        print(f"Biến động chưa đủ {THRESHOLD}. Giá hiện tại: {current_price}")
+    except Exception as e:
+        report = f"❌ Hệ thống gặp lỗi kỹ thuật: {str(e)}"
 
-# Vòng lặp kiểm tra mỗi 5 phút (300 giây)
-while True:
-    check_and_alert()
-    time.sleep(300)
+    return report, has_big_move
+
+def send_telegram(message):
+    token = os.getenv('TELEGRAM_TOKEN')
+    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={message}&parse_mode=Markdown"
+    requests.get(url)
+
+# Thực thi
+msg, urgent = get_market_data()
+send_telegram(msg)
